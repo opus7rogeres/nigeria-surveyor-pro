@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nigeria SurveyorPro Advanced - Professional Land Surveying</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .card-shadow {
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+        
+        .gps-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .slide-in {
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        .accuracy-excellent { color: #10b981; }
+        .accuracy-good { color: #3b82f6; }
+        .accuracy-fair { color: #f59e0b; }
+        .accuracy-poor { color: #ef4444; }
+        
+        .coordinate-display {
+            font-family: 'Courier New', monospace;
+            background: #f3f4f6;
+            padding: 0.5rem;
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { MapPin, Navigation, FileText, Database, Globe, CheckCircle, AlertTriangle, 
+                Download, Upload, Settings, Menu, X, Wifi, WifiOff, Camera, Ruler, 
+                MapIcon, Clock, Users, Shield, Zap, Target, TrendingUp, Activity } = lucide;
+
+        // Advanced geodetic calculations
+        const GeoCalculator = {
+            // Earth's radius in meters
+            EARTH_RADIUS: 6378137,
+            EARTH_FLATTENING: 1 / 298.257223563,
+            
+            // Convert degrees to radians
+            toRad(deg) {
+                return deg * Math.PI / 180;
+            },
+            
+            // Convert radians to degrees
+            toDeg(rad) {
+                return rad * 180 / Math.PI;
+            },
+            
+            // Haversine distance between two points (high accuracy)
+            haversineDistance(lat1, lon1, lat2, lon2) {
+                const dLat = this.toRad(lat2 - lat1);
+                const dLon = this.toRad(lon2 - lon1);
+                const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                         Math.cos(this.toRad(lat1)) * Math.cos(this.toRad(lat2)) *
+                         Math.sin(dLon / 2) * Math.sin(dLon / 2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                return this.EARTH_RADIUS * c;
+            },
+            
+            // Vincenty formula for even higher accuracy (geodesic distance)
+            vincentyDistance(lat1, lon1, lat2, lon2) {
+                const a = this.EARTH_RADIUS;
+                const b = a * (1 - this.EARTH_FLATTENING);
+                const f = this.EARTH_FLATTENING;
+                
+                const L = this.toRad(lon2 - lon1);
+                const U1 = Math.atan((1 - f) * Math.tan(this.toRad(lat1)));
+                const U2 = Math.atan((1 - f) * Math.tan(this.toRad(lat2)));
+                const sinU1 = Math.sin(U1), cosU1 = Math.cos(U1);
+                const sinU2 = Math.sin(U2), cosU2 = Math.cos(U2);
+                
+                let lambda = L, lambdaP, iterLimit = 100;
+                let cosSqAlpha, sinSigma, cos2SigmaM, cosSigma, sigma;
+                
+                do {
+                    const sinLambda = Math.sin(lambda), cosLambda = Math.cos(lambda);
+                    sinSigma = Math.sqrt((cosU2 * sinLambda) * (cosU2 * sinLambda) +
+                        (cosU1 * sinU2 - sinU1 * cosU2 * cosLambda) * (cosU1 * sinU2 - sinU1 * cosU2 * cosLambda));
+                    
+                    if (sinSigma === 0) return 0;
+                    
+                    cosSigma = sinU1 * sinU2 + cosU1 * cosU2 * cosLambda;
+                    sigma = Math.atan2(sinSigma, cosSigma);
+                    const sinAlpha = cosU1 * cosU2 * sinLambda / sinSigma;
+                    cosSqAlpha = 1 - sinAlpha * sinAlpha;
+                    cos2SigmaM = cosSigma - 2 * sinU1 * sinU2 / cosSqAlpha;
+                    
+                    if (isNaN(cos2SigmaM)) cos2SigmaM = 0;
+                    
+                    const C = f / 16 * cosSqAlpha * (4 + f * (4 - 3 * cosSqAlpha));
+                    lambdaP = lambda;
+                    lambda = L + (1 - C) * f * sinAlpha *
+                        (sigma + C * sinSigma * (cos2SigmaM + C * cosSigma * (-1 + 2 * cos2SigmaM * cos2SigmaM)));
+                } while (Math.abs(lambda - lambdaP) > 1e-12 && --iterLimit > 0);
+                
+                if (iterLimit === 0) return this.haversineDistance(lat1, lon1, lat2, lon2);
+                
+                const uSq = cosSqAlpha * (a * a - b * b) / (b * b);
+                const A = 1 + uSq / 16384 * (4096 + uSq * (-768 + uSq * (320 - 175 * uSq)));
+                const B = uSq / 1024 * (256 + uSq * (-128 + uSq * (74 - 47 * uSq)));
+                const deltaSigma = B * sinSigma * (cos2SigmaM + B / 4 * (cosSigma * (-1 + 2 * cos2SigmaM * cos2SigmaM) -
+                    B / 6 * cos2SigmaM * (-3 + 4 * sinSigma * sinSigma) * (-3 + 4 * cos2SigmaM * cos2SigmaM)));
+                
+                return b * A * (sigma - deltaSigma);
+            },
+            
+            // Calculate polygon area using spherical excess (most accurate for large areas)
+            calculateSphericalArea(points) {
+                if (points.length < 3) return 0;
+                
+                let sum = 0;
+                for (let i = 0; i < points.length; i++) {
+                    const p1 = points[i];
+                    const p2 = points[(i + 1) % points.length];
+                    sum += this.toRad(p2.longitude - p1.longitude) * 
+                           (2 + Math.sin(this.toRad(p1.latitude)) + Math.sin(this.toRad(p2.latitude)));
+                }
+                return Math.abs(sum * this.EARTH_RADIUS * this.EARTH_RADIUS / 2);
+            },
+            
+            // Calculate perimeter using Vincenty formula
+            calculatePerimeter(points) {
+                if (points.length < 2) return 0;
+                
+                let perimeter = 0;
+                for (let i = 0; i < points.length; i++) {
+                    const p1 = points[i];
+                    const p2 = points[(i + 1) % points.length];
+                    perimeter += this.vincentyDistance(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
+                }
+                return perimeter;
+            },
+            
+            // Convert WGS84 to UTM
+            wgs84ToUTM(lat, lon) {
+                const zoneNumber = Math.floor((lon + 180) / 6) + 1;
+                const lambda0 = (zoneNumber - 1) * 6 - 180 + 3;
+                
+                const a = 6378137.0;
+                const e = 0.081819191;
+                const e2 = e * e;
+                const k0 = 0.9996;
+                
+                const phi = this.toRad(lat);
+                const lambda = this.toRad(lon);
+                const lambda0Rad = this.toRad(lambda0);
+                
+                const N = a / Math.sqrt(1 - e2 * Math.sin(phi) * Math.sin(phi));
+                const T = Math.tan(phi) * Math.tan(phi);
+                const C = (e2 / (1 - e2)) * Math.cos(phi) * Math.cos(phi);
+                const A_coef = (lambda - lambda0Rad) * Math.cos(phi);
+                
+                const M = a * ((1 - e2/4 - 3*e2*e2/64 - 5*e2*e2*e2/256) * phi
+                    - (3*e2/8 + 3*e2*e2/32 + 45*e2*e2*e2/1024) * Math.sin(2*phi)
+                    + (15*e2*e2/256 + 45*e2*e2*e2/1024) * Math.sin(4*phi)
+                    - (35*e2*e2*e2/3072) * Math.sin(6*phi));
+                
+                const easting = k0 * N * (A_coef + (1 - T + C) * A_coef * A_coef * A_coef / 6
+                    + (5 - 18 * T + T * T + 72 * C - 58 * (e2/(1-e2))) * Math.pow(A_coef, 5) / 120) + 500000.0;
+                
+                const northing = k0 * (M + N * Math.tan(phi) * (A_coef * A_coef / 2
+                    + (5 - T + 9 * C + 4 * C * C) * Math.pow(A_coef, 4) / 24
+                    + (61 - 58 * T + T * T + 600 * C - 330 * (e2/(1-e2))) * Math.pow(A_coef, 6) / 720));
+                
+                const hemisphere = lat >= 0 ? 'N' : 'S';
+                
+                return {
+                    zone: `${zoneNumber}${hemisphere}`,
+                    easting: easting.toFixed(2),
+                    northing: (lat < 0 ? northing + 10000000 : northing).toFixed(2)
+                };
+            },
+            
+            // Get UTM zone for Nigeria
+            getNigeriaUTMZone(longitude) {
+                if (longitude >= 2.69 && longitude < 8.5) return '31N';
+                if (longitude >= 8.5 && longitude < 14.5) return '32N';
+                if (longitude >= 14.5 && longitude <= 14.68) return '33N';
+                return '32N'; // Default for most of Nigeria
+            }
+        };
+
+        // Main App Component
+        function NigeriaSurveyorPro() {
+            const [language, setLanguage] = useState('en');
+            const [isOffline, setIsOffline] = useState(!navigator.onLine);
+            const [currentView, setCurrentView] = useState('dashboard');
+            const [surveys, setSurveys] = useState([]);
+            const [menuOpen, setMenuOpen] = useState(false);
+
+            useEffect(() => {
+                const handleOnline = () => setIsOffline(false);
+                const handleOffline = () => setIsOffline(true);
+                
+                window.addEventListener('online', handleOnline);
+                window.addEventListener('offline', handleOffline);
+                
+                // Load surveys from localStorage
+                const savedSurveys = localStorage.getItem('nigeriasurveys');
+                if (savedSurveys) {
+                    setSurveys(JSON.parse(savedSurveys));
+                }
+                
+                return () => {
+                    window.removeEventListener('online', handleOnline);
+                    window.removeEventListener('offline', handleOffline);
+                };
+            }, []);
+
+            const translations = {
+                en: {
+                    appName: "Nigeria SurveyorPro Advanced",
+                    tagline: "Professional Land Surveying with Precision",
+                    newSurvey: "New Survey",
+                    mySurveys: "My Surveys",
+                    verification: "Verification",
+                    settings: "Settings",
+                    dashboard: "Dashboard",
+                    totalSurveys: "Total Surveys",
+                    totalArea: "Total Area Surveyed",
+                    accuracyRate: "Avg GPS Accuracy",
+                    recentProjects: "Recent Projects"
+                }
+            };
+
+            const t = translations[language];
+
+            const saveSurveys = (updatedSurveys) => {
+                setSurveys(updatedSurveys);
+                localStorage.setItem('nigeriasurveys', JSON.stringify(updatedSurveys));
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    {/* Header */}
+                    <header className="gradient-bg text-white sticky top-0 z-50 shadow-lg">
+                        <div className="container mx-auto px-4 py-4">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-3">
+                                    <MapPin size={32} className="gps-pulse" />
+                                    <div>
+                                        <h1 className="text-xl font-bold">{t.appName}</h1>
+                                        <p className="text-xs text-purple-200">{t.tagline}</p>
+                                    </div>
+                                </div>
+                                
+                                <div className="flex items-center space-x-4">
+                                    <div className="flex items-center space-x-2 bg-white/20 px-3 py-1 rounded-full">
+                                        {isOffline ? <WifiOff size={16} /> : <Wifi size={16} />}
+                                        <span className="text-xs font-medium">
+                                            {isOffline ? 'Offline' : 'Online'}
+                                        </span>
+                                    </div>
+                                    <button onClick={() => setMenuOpen(!menuOpen)}>
+                                        {menuOpen ? <X size={24} /> : <Menu size={24} />}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Navigation */}
+                    <nav className="bg-white shadow-sm border-b sticky top-16 z-40">
+                        <div className="container mx-auto px-4">
+                            <div className="flex overflow-x-auto space-x-1">
+                                <NavButton 
+                                    icon={<MapIcon size={18} />} 
+                                    label={t.dashboard}
+                                    active={currentView === 'dashboard'}
+                                    onClick={() => setCurrentView('dashboard')}
+                                />
+                                <NavButton 
+                                    icon={<FileText size={18} />} 
+                                    label={t.newSurvey}
+                                    active={currentView === 'new'}
+                                    onClick={() => setCurrentView('new')}
+                                />
+                                <NavButton 
+                                    icon={<Database size={18} />} 
+                                    label={t.mySurveys}
+                                    active={currentView === 'list'}
+                                    onClick={() => setCurrentView('list')}
+                                />
+                                <NavButton 
+                                    icon={<Shield size={18} />} 
+                                    label={t.verification}
+                                    active={currentView === 'verify'}
+                                    onClick={() => setCurrentView('verify')}
+                                />
+                            </div>
+                        </div>
+                    </nav>
+
+                    {/* Main Content */}
+                    <main className="container mx-auto px-4 py-6">
+                        {currentView === 'dashboard' && <Dashboard surveys={surveys} t={t} setCurrentView={setCurrentView} />}
+                        {currentView === 'new' && <NewSurvey t={t} saveSurveys={saveSurveys} surveys={surveys} setCurrentView={setCurrentView} />}
+                        {currentView === 'list' && <SurveyList surveys={surveys} t={t} setCurrentView={setCurrentView} />}
+                        {currentView === 'verify' && <Verification t={t} surveys={surveys} />}
+                    </main>
+                </div>
+            );
+        }
+
+        function NavButton({ icon, label, active, onClick }) {
+            return (
+                <button
+                    onClick={onClick}
+                    className={`flex items-center space-x-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${
+                        active 
+                            ? 'border-purple-600 text-purple-600 font-semibold' 
+                            : 'border-transparent text-gray-600 hover:text-purple-600'
+                    }`}
+                >
+                    {icon}
+                    <span className="text-sm">{label}</span>
+                </button>
+            );
+        }
+
+        function Dashboard({ surveys, t, setCurrentView }) {
+            const totalArea = surveys.reduce((sum, s) => sum + (s.area || 0), 0);
+            const avgAccuracy = surveys.length > 0 
+                ? surveys.reduce((sum, s) => sum + (s.avgAccuracy || 0), 0) / surveys.length 
+                : 0;
+
+            return (
+                <div className="space-y-6 pb-20">
+                    {/* Stats Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <StatCard 
+                            icon={<FileText className="text-purple-600" size={32} />}
+                            label={t.totalSurveys}
+                            value={surveys.length}
+                            color="purple"
+                        />
+                        <StatCard 
+                            icon={<TrendingUp className="text-green-600" size={32} />}
+                            label={t.totalArea}
+                            value={`${(totalArea / 10000).toFixed(2)} ha`}
+                            color="green"
+                        />
+                        <StatCard 
+                            icon={<Target className="text-blue-600" size={32} />}
+                            label={t.accuracyRate}
+                            value={`±${avgAccuracy.toFixed(2)}m`}
+                            color="blue"
+                        />
+                    </div>
+
+                    {/* Quick Actions */}
+                    <div className="bg-white rounded-xl p-6 card-shadow">
+                        <h2 className="text-xl font-bold text-gray-800 mb-4">Quick Actions</h2>
+                        <div className="grid grid-cols-2 gap-4">
+                            <button 
+                                onClick={() => setCurrentView('new')}
+                                className="gradient-bg text-white p-4 rounded-lg flex flex-col items-center space-y-2 hover:shadow-lg transition-shadow"
+                            >
+                                <FileText size={32} />
+                                <span className="font-semibold">Start New Survey</span>
+                            </button>
+                            <button 
+                                onClick={() => setCurrentView('verify')}
+                                className="bg-green-600 text-white p-4 rounded-lg flex flex-col items-center space-y-2 hover:shadow-lg transition-shadow"
+                            >
+                                <Shield size={32} />
+                                <span className="font-semibold">Verify Plan</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Recent Surveys */}
+                    {surveys.length > 0 && (
+                        <div className="bg-white rounded-xl p-6 card-shadow">
+                            <h2 className="text-xl font-bold text-gray-800 mb-4">{t.recentProjects}</h2>
+                            <div className="space-y-3">
+                                {surveys.slice(-5).reverse().map(survey => (
+                                    <div key={survey.id} className="border border-gray-200 rounded-lg p-4 hover:border-purple-400 transition-colors">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <h3 className="font-semibold text-gray-800">{survey.projectName}</h3>
+                                                <p className="text-sm text-gray-600">{survey.location}</p>
+                                                <p className="text-xs text-gray-500 mt-1">{new Date(survey.createdAt).toLocaleDateString()}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-sm font-semibold text-purple-600">{(survey.area / 10000).toFixed(3)} ha</p>
+                                                <p className="text-xs text-gray-500">{survey.points.length} beacons</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        function StatCard({ icon, label, value, color }) {
+            const colorClasses = {
+                purple: 'from-purple-50 to-purple-100 border-purple-200',
+                green: 'from-green-50 to-green-100 border-green-200',
+                blue: 'from-blue-50 to-blue-100 border-blue-200'
+            };
+
+            return (
+                <div className={`bg-gradient-to-br ${colorClasses[color]} border rounded-xl p-6 card-shadow`}>
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <p className="text-sm text-gray-600 font-medium">{label}</p>
+                            <p className="text-2xl font-bold text-gray-800 mt-1">{value}</p>
+                        </div>
+                        {icon}
+                    </div>
+                </div>
+            );
+        }
+
+        function NewSurvey({ t, saveSurveys, surveys, setCurrentView }) {
+            const [projectName, setProjectName] = useState('');
+            const [location, setLocation] = useState('');
+            const [client, setClient] = useState('');
+            const [surveyType, setSurveyType] = useState('cadastral');
+            const [points, setPoints] = useState([]);
+            const [currentGPS, setCurrentGPS] = useState(null);
+            const [gpsAccuracy, setGpsAccuracy] = useState(null);
+            const [isCapturing, setIsCapturing] = useState(false);
+            const watchIdRef = useRef(null);
+
+            useEffect(() => {
+                return () => {
+                    if (watchIdRef.current) {
+                        navigator.geolocation.clearWatch(watchIdRef.current);
+                    }
+                };
+            }, []);
+
+            const startGPSTracking = () => {
+                if (!navigator.geolocation) {
+                    alert('Geolocation is not supported by your browser');
+                    return;
+                }
+
+                setIsCapturing(true);
+                
+                watchIdRef.current = navigator.geolocation.watchPosition(
+                    (position) => {
+                        setCurrentGPS({
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude,
+                            altitude: position.coords.altitude || 0,
+                            accuracy: position.coords.accuracy,
+                            timestamp: position.timestamp
+                        });
+                        setGpsAccuracy(position.coords.accuracy);
+                    },
+                    (error) => {
+                        console.error('GPS Error:', error);
+                        alert('Unable to get GPS location. Please enable location services.');
+                        setIsCapturing(false);
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        maximumAge: 0,
+                        timeout: 5000
+                    }
+                );
+            };
+
+            const capturePoint = () => {
+                if (!currentGPS) {
+                    alert('No GPS signal. Please wait for GPS lock.');
+                    return;
+                }
+
+                const newPoint = {
+                    id: Date.now(),
+                    beaconNumber: `B${points.length + 1}`,
+                    latitude: currentGPS.latitude,
+                    longitude: currentGPS.longitude,
+                    altitude: currentGPS.altitude,
+                    accuracy: currentGPS.accuracy,
+                    timestamp: new Date().toISOString()
+                };
+
+                setPoints([...points, newPoint]);
+            };
+
+            const deletePoint = (id) => {
+                setPoints(points.filter(p => p.id !== id));
+            };
+
+            const getAccuracyClass = (accuracy) => {
+                if (accuracy < 5) return 'accuracy-excellent';
+                if (accuracy < 10) return 'accuracy-good';
+                if (accuracy < 20) return 'accuracy-fair';
+                return 'accuracy-poor';
+            };
+
+            const getAccuracyLabel = (accuracy) => {
+                if (accuracy < 5) return 'Excellent';
+                if (accuracy < 10) return 'Good';
+                if (accuracy < 20) return 'Fair';
+                return 'Poor';
+            };
+
+            const generateSurveyPlan = () => {
+                if (points.length < 3) {
+                    alert('You need at least 3 points to generate a survey plan');
+                    return;
+                }
+
+                const area = GeoCalculator.calculateSphericalArea(points);
+                const perimeter = GeoCalculator.calculatePerimeter(points);
+                const avgAccuracy = points.reduce((sum, p) => sum + p.accuracy, 0) / points.length;
+                
+                const centerLat = points.reduce((sum, p) => sum + p.latitude, 0) / points.length;
+                const centerLon = points.reduce((sum, p) => sum + p.longitude, 0) / points.length;
+                const utmZone = GeoCalculator.getNigeriaUTMZone(centerLon);
+                const utmCoords = GeoCalculator.wgs84ToUTM(centerLat, centerLon);
+
+                const newSurvey = {
+                    id: Date.now(),
+                    projectName,
+                    location,
+                    client,
+                    surveyType,
+                    points,
+                    area: area,
+                    perimeter: perimeter,
+                    avgAccuracy: avgAccuracy,
+                    utmZone: utmZone,
+                    utmCoords: utmCoords,
+                    qrCode: `NGS-${Date.now().toString(36).toUpperCase()}`,
+                    createdAt: new Date().toISOString()
+                };
+
+                const updatedSurveys = [...surveys, newSurvey];
+                saveSurveys(updatedSurveys);
+                
+                alert('Survey plan generated successfully!');
+                setCurrentView('list');
+            };
+
+            return (
+                <div className="max-w-4xl mx-auto space-y-6 pb-20">
+                    {/* Project Details */}
+                    <div className="bg-white rounded-xl p-6 card-shadow slide-in">
+                        <h2 className="text-2xl font-bold text-gray-800 mb-6">Project Details</h2>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Project Name *</label>
+                                <input
+                                    type="text"
+                                    value={projectName}
+                                    onChange={(e) => setProjectName(e.target.value)}
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                    placeholder="e.g., Gwarinpa Phase II Layout"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Location *</label>
+                                <input
+                                    type="text"
+                                    value={location}
+                                    onChange={(e) => setLocation(e.target.value)}
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                    placeholder="e.g., Plot 123, Gwarinpa, Abuja FCT"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Client Name *</label>
+                                <input
+                                    type="text"
+                                    value={client}
+                                    onChange={(e) => setClient(e.target.value)}
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                    placeholder="e.g., Mr. Adewale Johnson"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Survey Type *</label>
+                                <select
+                                    value={surveyType}
+                                    onChange={(e) => setSurveyType(e.target.value)}
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                >
+                                    <option value="cadastral">Cadastral Survey</option>
+                                    <option value="topographic">Topographic Survey</option>
+                                    <option value="boundary">Boundary Demarcation</option>
+                                    <option value="layout">Layout & Subdivision</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* GPS Capture */}
+                    <div className="bg-white rounded-xl p-6 card-shadow">
+                        <div className="flex items-center justify-between mb-6">
+                            <h2 className="text-2xl font-bold text-gray-800">GPS Data Capture</h2>
+                            {!isCapturing ? (
+                                <button
+                                    onClick={startGPSTracking}
+                                    className="gradient-bg text-white px-6 py-3 rounded-lg font-semibold hover:shadow-lg transition-shadow flex items-center space-x-2"
+                                >
+                                    <Navigation size={20} />
+                                    <span>Start GPS</span>
+                                </button>
+                            ) : (
+                                <div className="flex items-center space-x-2 text-green-600">
+                                    <Activity size={20} className="gps-pulse" />
+                                    <span className="font-semibold">GPS Active</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Current GPS Status */}
+                        {currentGPS && (
+                            <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-6 mb-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <p className="text-sm text-gray-600 font-medium">Latitude</p>
+                                        <p className="coordinate-display">{currentGPS.latitude.toFixed(8)}°</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-600 font-medium">Longitude</p>
+                                        <p className="coordinate-display">{currentGPS.longitude.toFixed(8)}°</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-600 font-medium">Altitude</p>
+                                        <p className="coordinate-display">{currentGPS.altitude.toFixed(2)} m</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-600 font-medium">GPS Accuracy</p>
+                                        <p className={`font-bold text-lg ${getAccuracyClass(currentGPS.accuracy)}`}>
+                                            ±{currentGPS.accuracy.toFixed(2)}m ({getAccuracyLabel(currentGPS.accuracy)})
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <button
+                                    onClick={capturePoint}
+                                    disabled={!currentGPS || currentGPS.accuracy > 20}
+                                    className="w-full mt-4 bg-green-600 text-white py-4 rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center justify-center space-x-2"
+                                >
+                                    <Target size={24} />
+                                    <span>Capture Beacon Point</span>
+                                </button>
+                                {currentGPS.accuracy > 20 && (
+                                    <p className="text-sm text-orange-600 text-center mt-2">
+                                        ⚠️ GPS accuracy is poor. Wait for better signal before capturing.
+                                    </p>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Captured Points */}
+                        {points.length > 0 && (
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-800 mb-4">
+                                    Captured Beacons ({points.length})
+                                </h3>
+                                <div className="space-y-3 max-h-96 overflow-y-auto">
+                                    {points.map((point, index) => (
+                                        <div key={point.id} className="border border-gray-200 rounded-lg p-4 hover:border-purple-400 transition-colors">
+                                            <div className="flex justify-between items-start">
+                                                <div className="flex-1">
+                                                    <div className="flex items-center space-x-3 mb-2">
+                                                        <span className="bg-purple-600 text-white px-3 py-1 rounded-full text-sm font-bold">
+                                                            {point.beaconNumber}
+                                                        </span>
+                                                        <span className={`text-xs font-semibold ${getAccuracyClass(point.accuracy)}`}>
+                                                            ±{point.accuracy.toFixed(2)}m
+                                                        </span>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-2 text-sm">
+                                                        <div>
+                                                            <span className="text-gray-600">Lat:</span>
+                                                            <span className="ml-1 font-mono">{point.latitude.toFixed(6)}°</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="text-gray-600">Lon:</span>
+                                                            <span className="ml-1 font-mono">{point.longitude.toFixed(6)}°</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="text-gray-600">Alt:</span>
+                                                            <span className="ml-1 font-mono">{point.altitude.toFixed(2)}m</span>
+                                                        </div>
+                                                        <div className="text-gray-500 text-xs">
+                                                            {new Date(point.timestamp).toLocaleTimeString()}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => deletePoint(point.id)}
+                                                    className="text-red-600 hover:text-red-800 p-2"
+                                                >
+                                                    <X size={20} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Summary Statistics */}
+                                {points.length >= 3 && (
+                                    <div className="mt-6 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-6">
+                                        <h4 className="font-bold text-gray-800 mb-3">Preliminary Calculations</h4>
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                            <div>
+                                                <p className="text-gray-600">Total Beacons</p>
+                                                <p className="text-lg font-bold text-purple-600">{points.length}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-gray-600">Est. Area</p>
+                                                <p className="text-lg font-bold text-green-600">
+                                                    {(GeoCalculator.calculateSphericalArea(points) / 10000).toFixed(4)} ha
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <p className="text-gray-600">Perimeter</p>
+                                                <p className="text-lg font-bold text-blue-600">
+                                                    {GeoCalculator.calculatePerimeter(points).toFixed(2)} m
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <p className="text-gray-600">Avg Accuracy</p>
+                                                <p className={`text-lg font-bold ${getAccuracyClass(points.reduce((sum, p) => sum + p.accuracy, 0) / points.length)}`}>
+                                                    ±{(points.reduce((sum, p) => sum + p.accuracy, 0) / points.length).toFixed(2)}m
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Generate Button */}
+                    {points.length >= 3 && (
+                        <button
+                            onClick={generateSurveyPlan}
+                            className="w-full gradient-bg text-white py-5 rounded-xl font-bold text-lg hover:shadow-xl transition-shadow flex items-center justify-center space-x-3"
+                        >
+                            <FileText size={28} />
+                            <span>Generate Professional Survey Plan</span>
+                        </button>
+                    )}
+                </div>
+            );
+        }
+
+        function SurveyList({ surveys, t, setCurrentView }) {
+            return (
+                <div className="max-w-4xl mx-auto pb-20">
+                    <div className="bg-white rounded-xl p-6 card-shadow">
+                        <h2 className="text-2xl font-bold text-gray-800 mb-6">My Survey Projects</h2>
+                        
+                        {surveys.length === 0 ? (
+                            <div className="text-center py-12">
+                                <FileText size={64} className="mx-auto text-gray-300 mb-4" />
+                                <p className="text-gray-500 mb-4">No surveys yet</p>
+                                <button
+                                    onClick={() => setCurrentView('new')}
+                                    className="gradient-bg text-white px-6 py-3 rounded-lg font-semibold"
+                                >
+                                    Create Your First Survey
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {surveys.map(survey => (
+                                    <div key={survey.id} className="border-2 border-gray-200 rounded-xl p-6 hover:border-purple-400 transition-colors">
+                                        <div className="flex justify-between items-start mb-4">
+                                            <div>
+                                                <h3 className="text-xl font-bold text-gray-800">{survey.projectName}</h3>
+                                                <p className="text-gray-600">{survey.location}</p>
+                                                <p className="text-sm text-gray-500 mt-1">Client: {survey.client}</p>
+                                            </div>
+                                            <span className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs font-semibold">
+                                                {survey.surveyType}
+                                            </span>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                                            <div>
+                                                <p className="text-xs text-gray-600">Area</p>
+                                                <p className="font-bold text-green-600">{(survey.area / 10000).toFixed(4)} ha</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-xs text-gray-600">Perimeter</p>
+                                                <p className="font-bold text-blue-600">{survey.perimeter.toFixed(2)} m</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-xs text-gray-600">Beacons</p>
+                                                <p className="font-bold text-purple-600">{survey.points.length}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-xs text-gray-600">Accuracy</p>
+                                                <p className="font-bold text-orange-600">±{survey.avgAccuracy.toFixed(2)}m</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex items-center justify-between pt-4 border-t border-gray-200">
+                                            <span className="text-sm text-gray-500">
+                                                {new Date(survey.createdAt).toLocaleDateString('en-NG', {
+                                                    year: 'numeric',
+                                                    month: 'long',
+                                                    day: 'numeric'
+                                                })}
+                                            </span>
+                                            <div className="flex space-x-2">
+                                                <button className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-purple-700">
+                                                    View Details
+                                                </button>
+                                                <button className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-700">
+                                                    Export PDF
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        function Verification({ t, surveys }) {
+            const [verificationCode, setVerificationCode] = useState('');
+            const [verificationResult, setVerificationResult] = useState(null);
+
+            const handleVerify = () => {
+                const survey = surveys.find(s => s.qrCode === verificationCode);
+                
+                if (survey) {
+                    setVerificationResult({
+                        valid: true,
+                        survey: survey
+                    });
+                } else {
+                    setVerificationResult({
+                        valid: false
+                    });
+                }
+            };
+
+            return (
+                <div className="max-w-2xl mx-auto pb-20">
+                    <div className="bg-white rounded-xl p-8 card-shadow">
+                        <div className="text-center mb-8">
+                            <Shield size={64} className="mx-auto text-purple-600 mb-4 gps-pulse" />
+                            <h2 className="text-3xl font-bold text-gray-800 mb-2">Verify Survey Plan</h2>
+                            <p className="text-gray-600">Enter verification code to authenticate survey document</p>
+                        </div>
+
+                        <div className="space-y-6">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Verification Code
+                                </label>
+                                <input
+                                    type="text"
+                                    value={verificationCode}
+                                    onChange={(e) => setVerificationCode(e.target.value.toUpperCase())}
+                                    className="w-full px-4 py-4 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-center font-mono text-lg"
+                                    placeholder="NGS-XXXXXXXXX"
+                                />
+                            </div>
+
+                            <button
+                                onClick={handleVerify}
+                                className="w-full gradient-bg text-white py-4 rounded-lg font-bold text-lg hover:shadow-xl transition-shadow"
+                            >
+                                Verify Survey Plan
+                            </button>
+
+                            {verificationResult && (
+                                <div className={`mt-6 border-2 rounded-xl p-6 ${
+                                    verificationResult.valid 
+                                        ? 'border-green-500 bg-green-50' 
+                                        : 'border-red-500 bg-red-50'
+                                }`}>
+                                    {verificationResult.valid ? (
+                                        <>
+                                            <div className="flex items-center space-x-3 mb-4">
+                                                <CheckCircle size={40} className="text-green-600" />
+                                                <h3 className="text-2xl font-bold text-green-800">Survey Plan Verified ✓</h3>
+                                            </div>
+                                            <div className="space-y-3 text-sm bg-white rounded-lg p-4">
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <span className="font-semibold text-gray-700">Survey ID:</span>
+                                                    <span className="font-mono">{verificationResult.survey.qrCode}</span>
+                                                    
+                                                    <span className="font-semibold text-gray-700">Project:</span>
+                                                    <span>{verificationResult.survey.projectName}</span>
+                                                    
+                                                    <span className="font-semibold text-gray-700">Location:</span>
+                                                    <span>{verificationResult.survey.location}</span>
+                                                    
+                                                    <span className="font-semibold text-gray-700">Client:</span>
+                                                    <span>{verificationResult.survey.client}</span>
+                                                    
+                                                    <span className="font-semibold text-gray-700">Area:</span>
+                                                    <span className="text-green-600 font-bold">{(verificationResult.survey.area / 10000).toFixed(4)} hectares</span>
+                                                    
+                                                    <span className="font-semibold text-gray-700">Date:</span>
+                                                    <span>{new Date(verificationResult.survey.createdAt).toLocaleDateString()}</span>
+                                                    
+                                                    <span className="font-semibold text-gray-700">UTM Zone:</span>
+                                                    <span>{verificationResult.survey.utmZone}</span>
+                                                </div>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div className="flex items-center space-x-3 mb-3">
+                                                <AlertTriangle size={40} className="text-red-600" />
+                                                <h3 className="text-2xl font-bold text-red-800">Invalid Code</h3>
+                                            </div>
+                                            <p className="text-red-700">
+                                                This verification code is not valid. Please check the code and try again, 
+                                                or contact the surveyor for verification.
+                                            </p>
+                                        </>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="mt-8 bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-purple-200 rounded-xl p-6">
+                            <h4 className="font-bold text-purple-900 mb-3 flex items-center space-x-2">
+                                <Shield size={24} />
+                                <span>Anti-Fraud Protection</span>
+                            </h4>
+                            <p className="text-sm text-purple-800 leading-relaxed">
+                                Every survey plan generated with Nigeria SurveyorPro Advanced includes a unique 
+                                verification code and QR code. These can be checked instantly to authenticate 
+                                survey documents and prevent fraudulent land documentation. All coordinates are 
+                                captured using high-precision GPS with accuracy tracking and stored securely.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Render the app
+        ReactDOM.render(<NigeriaSurveyorPro />, document.getElementById('root'));
+    </script>
+</body>
+</html>
